@@ -1,0 +1,211 @@
+%        File: report.tex
+%     Created: Wed Sep 19 09:00 AM 2018 C
+% Last Change: Wed Sep 19 09:00 AM 2018 C
+%
+\documentclass[letterpaper]{article}
+\usepackage[top=1.0in,bottom=1.0in,left=1.0in,right=1.0in]{geometry}
+\usepackage{verbatim}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{siunitx}
+\usepackage[linesnumbered, ruled, vlined]{algorithm2e}
+\usepackage[ruled,vlined]{algorithm2e}
+\SetKwInOut{Input}{Inputs}
+\SetKwInOut{Output}{Outputs}
+\usepackage{longtable}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\def\thesection       {\arabic{section}}
+\def\thesubsection     {\thesection.\alph{subsection}}
+
+\author{John Leland
+        \\ \href{mailto:YOUREMAIL@illinois.edu}{\texttt{jleland2@illinois.edu}}
+}
+
+\title{NPRE 555\\
+Computer Project\\
+01}
+\begin{document}
+%\clearpage
+\begin{titlepage}
+\maketitle
+\thispagestyle{empty}
+\end{titlepage}
+
+\section{Introduction}
+The purpose of this project was to create a Monte Carlo (MC) code to find the flux distribution and calculate the multiplication constant ($k_{eff}$) for one-speed neutrons in a slab reactor. The slab reactor had a thickness of \SI{1.0}{\m} and is separated into two regions with their own respective absorption and scattering cross sections, as shown in Table~\ref{tab:cx_data}.
+
+ \begin{table}[hbt!]
+    \caption{Table containing the cross section data for the slab reactor.}
+    \label{tab:cx_data}
+    \centering
+    \begin{tabular}{ |c|ccc| }
+    \hline 
+  Region & $\Sigma_a$ (cm$^{-1}$) & $\Sigma_s$ (cm$^{-1}$)  & $\nu\Sigma_f$ (cm$^{-1}$) \\
+    \hline 
+    ($0<x<50$) cm & 0.12 & 0.05 & 0.15 \\
+    ($50<x<100$) cm & 0.10 & 0.05 & 0.12  \\
+    \hline 
+    \end{tabular}
+\end{table}
+
+The developed MC code will allow the user to specify the number of neutrons initially generated, the number of active and inactive generations, and the number of bins used to represent the flux distribution.
+
+\section{Methods}
+This section describes the method in which the MC code is implemented and how the flux distribution and multiplication constant are calculated. As defined, the slab reactor is split into two regions from ($0<x<50$)cm and ($50<x<100$)cm, where each will be referred to as the left and right regions, respectively. The medium boundaries and interface positions at $x=0$, $x=50$, and $x=100$ cm are defined within the class \texttt{medium\_data()}. The cross section data for each region is stored in separate functions, \texttt{left\_region()} and \texttt{right\_region()}.
+
+\subsection{MC Algorithm}
+Algorithm~\ref{alg:MC_code} shows how the MC code works. The user defined inputs are the cross section data, the number of active and inactive generations, the number of neutrons in the first generation, and the number of tally bins. 
+
+\begin{algorithm}
+  \Input{CX data; active generations; inactive generations; histories; tally bins}
+  \Output{$k_{\mathrm{eff}}$, flux}
+  \DontPrintSemicolon
+  Generate initial neutron distribution: \texttt{NeutronBank}\;
+  \For{Number of Active + Inactive Generations}{
+    \For{Histories in NeutronBank}{
+      Sample direction\;
+      \While{neutron is alive}{
+        Determine neutron path\;
+        Determine collision type\;
+        Update flux tallies\;
+
+        \If{scatter}{
+          Resample direction\;
+        }
+        \If{absorbed}{
+          Generate fission neutrons: \texttt{FissionBank}\;
+          Neutron no longer alive\;
+        }
+      }
+    }
+    Calculate multiplication\;
+    \texttt{NeutronBank} $\gets$ \texttt{FissionBank}\;
+  }
+  \caption{Pseudocode for Monte Carlo algorithm.}
+  \label{alg:MC_code}
+\end{algorithm}
+
+The distribution of neutrons in the first generation (NeutronBank) contains $N$ neutrons positioned relative to the $\nu\Sigma_f$ in each region. The function \texttt{gen\_neutron()} places neutrons uniformly in each region where Equation~\ref{eqn:p_region} is probability of each neutron being in their respective regions.
+\begin{equation}
+\begin{split}
+    & p(\text{right}) = \frac{\nu\Sigma_{f,right}}{\nu\Sigma_{f,right}+\nu\Sigma_{f,left}} \\
+    & p(\text{left}) = \frac{\nu\Sigma_{f,left}}{\nu\Sigma_{f,right}+\nu\Sigma_{f,left}} 
+\end{split}
+\label{eqn:p_region}
+\end{equation}
+The simulation will then loop through the set number of generations (active + inactive). The NeutronBank of each new generation is the generated FissionBank of the preceding generation. The method in which the FissionBank is generated is discussed later in Section~\ref{sec:fission}. The inactive generations are used to allow the fission source distribution to settle and the tallies and multiplication constant are discarded for each until the active generations begin.
+
+The direction of each neutron, Equation~\ref{eqn:direction}, is sampled uniformly from [-1, 1]. $\theta$ is the angle between the neutron path and a vector parallel to the x-axis. 
+\begin{equation}
+    \mu=cos(\theta)
+    \label{eqn:direction}
+\end{equation}
+
+The cross section data associated with each neutron is determined using the \texttt{region\_finder()} function. This function determines on which side of the interface ($x=$\SI{50}{\cm}) the neutron lies on and then calls the \texttt{cx\_binning()} function with the correct region data input from either \texttt{left\_region()} or \texttt{right\_region()}. The binning function will then provide the $\Sigma_t$, the probability of absorption, the probability of scattering, and the $\nu\Sigma_f$ for the given region. The total cross section, $\Sigma_t$ is given by Equation~\ref{eqn:cx_t}. In this project, the fission cross section is contained within the absorption cross section. This is discussed further in Section~\ref{sec:fission}.
+\begin{equation}
+    \Sigma_t = \Sigma_a+\Sigma_s
+    \label{eqn:cx_t}
+\end{equation}
+The probability of absorption is given by Equation~\ref{eqn:p_abs} and the probability of scattering by Equation~\ref{eqn:p_sca}.
+\begin{equation}
+    P(abs)=\frac{\Sigma_a}{\Sigma_t}
+    \label{eqn:p_abs}
+\end{equation}
+\begin{equation}
+    P(sca) = \frac{\Sigma_s}{\Sigma_t}
+    \label{eqn:p_sca}
+\end{equation}
+
+\subsection{Neutron Path}
+The neutron travel distance ($x$) derivation is shown in Equation~\ref{eqn:mfp}, where $x$ is the distance traveled and $\Sigma_t$ is the total cross section~\cite{Stacey}. The function \texttt{mean\_free\_path()} handles this where $\xi$ is sampled uniformly from [0, 1]. This is the neutron path length within the slab reactor dependent on direction. This means that the neutron could have traveled over \SI{100}{\cm} but is still inside the slab reactor.
+
+\begin{equation}
+    \begin{split}
+        & \text{PDF}=\Sigma_te^{-\Sigma_t x} \\
+        & \text{CDF} = 1-e^{-\Sigma_t x} \\
+        & \text{Set the CDF equal to: } \xi \in[0, 1] \\
+        & \xi = 1-e^{-\Sigma_t x} \\
+        & \text{Solve for: } x \\
+        & x = \frac{-1}{\Sigma_t}ln(1-\xi) \\
+        & \text{$-ln(1-\xi)$ and $-ln(\xi)$ have the same distribution} \\
+        & x = \frac{-1}{\Sigma_t}ln(\xi) \\
+    \end{split}
+\end{equation}
+
+\begin{equation}
+    x=\frac{-1}{\Sigma_t}ln(\xi)
+    \label{eqn:mfp}
+\end{equation}
+The horizontal component of the neutron path length is calculated as $x\times\mu$. In order to advance the neutron within the slab, we need to first calculate the distance between the current neutron position and the slab interface and boundaries. This is handled by the \texttt{neutron\_path()} function. \texttt{neutron\_path()} will calculate the distances to the medium interface and the medium boundaries based on the current neutron position and neutron direction. The code then advances the neutron by what is shorter, the horizontal distance traveled by the neutron or the distance to the nearest medium bound. If the medium interface is closest, the neutron is then placed at $x=50 \pm 1e-10$cm based on its direction ($+1e-10$ if traveling right and $-1e-10$ if traveling left). This nudge in either direction makes sure the neutron has crossed the interface into the new region. The code then resets to the beginning, recalculating the cross section data based on the new region and resampling $x$ while preserving the original neutron direction $\mu$. If the distance to the region boundaries at $x=0$ or $x=100$ cm are shortest, the neutron has then streamed outside the slab geometry. In this case the neutron is terminated and we simulate the next neutron. If the horizontal distance traveled is shortest, the neutron position is updated and the code continues to the collision physics.
+
+
+\subsection{Collisions}
+When a collision occurs, the collision type is sampled using the probabilities of absorption and scattering calculated by the \texttt{region\_finder()} function. To do this, we uniformly sample a number from [0, 1]. If this number is less than the probability of absorption we go to the fission calculate, otherwise the neutron scatters. If the neutron scatters, the new direction of the neutron is sampled using Equation~\ref{eqn:scattering} which is from Lewis \& Miller Equation 7-163~\cite{LewisMiller}. This method of sampling the new scattering angle takes into account the conservation of energy and momentum after the collision. $cos(\theta)$ is the scattering angle in the laboratory system and is sampled uniformly from [-1, 1], $\omega$ is a polar angle defined by $2\pi\xi$ where $\xi$ is a number sampled uniformly from [0, 1], and $\mu_{old}$ is the previous scattering angle. Once the new scattering angle is sampled, the code starts again from the beginning.
+\begin{equation}
+    \mu_{new}=sin(\theta)\sqrt{1-\mu_{old}^2}cos(\omega)+\mu_{old}cos(\theta)
+    \label{eqn:scattering}
+\end{equation}
+
+
+\subsection{Fissions}
+\label{sec:fission}
+The fission cross section is encompassed by the absorption cross section., as given by the following from Equation 7-187 in Lewis \& Miller~\cite{LewisMiller}. For each absorption event, the expected number of neutrons from fission is $x_n$. For each generation, $k$ is estimated by summing $x_n$ over all absorptions in that generation and then dividing by the initial neutron population of the same generation. 
+
+\begin{equation}
+    x_n=\frac{\nu\Sigma_f}{\Sigma_a}
+\end{equation}
+The number of neutrons per fission is then calculated using the remainder of $\frac{x_n}{k}$, where depending on the region where the fission occurs, either 0, 1, or 2 neutrons are generated. The FissionBank is then populated by the position of fission for each neutron generated; for example, if a neutron fissions at $x=12$cm and generates 2 neutrons, the position $x=12$cm is added twice to the FissionBank. The number of neutrons generated, $x_n$, is normalized by $k$ of the previous generation. The NeutronBank of the following generation is then equal to the current generation's FissionBank.
+
+\subsection{Tally Estimators}
+The tallies are handled by the tally class which is initialized at the beginning the code and then re-initialized at the beginning of the active generations. This allows the user to check the tallies during the inactive generations while also resetting the flux distributions for the active generations. The medium is divided into a user defined number of equal width bins, where the bin width is $\frac{100\text{cm}}{\text{number of bins}}$. The primary flux estimator is the track length tally which is implemented by the \texttt{track\_length()} function within the tally class. The function requires the initial neutron position, the new neutron position, the neutron direction, and the current generation's neutron population. Each tally bin traversed by the neutron is filled with the distance the neutron travels within it normalized by the neutron population and tally bin width. The function handles the neutron direction by redefining the neutron start and stop positions of the neutron as the left-most position and right-most position. The \texttt{tally\_bin} function takes position and tally bin width as inputs and calculates the associated left-most and right-most bins. The bins are then iteratively filled by neutron track length in it, taking into account the edge bins where the neutron doesn't travel the full length of the bin. An end point, defined as $1e-12$cm, is subtracted from the right-most position to handle potential edge cases where the neutron ends up at $x=100$cm. The collision tally is handled by the \texttt{collision()} function within the tally class. This function adds 1 to the bin where a collision occurs and is normalized by $\Sigma_t$, the neutron population, and the tally bin width. 
+
+\subsection{MC Code Outputs}
+The multiplication constant and tally distributions are calculated per generation, inactive and active. For each active generation, the calculated multiplication constant, $k$, is saved and the tally distributions are summed. Once all active generations are complete, the code calculates the average multiplication constant and average track length and collision estimated flux distributions for the number of active generations.
+
+\section{Results}
+This section presents MC code results for the one-speed, two-region slab reactor. All calculations assumed vacuum boundaries at $x=0$ and $x=100$\,cm. The flux distributions across the medium are are reported for the following user input values used for the presented results are an initial population of $N=10,000$ neutrons, 20 inactive generations, 20 active generations, and 200 tally bins. Additionally, for the first generation, $k$ is guessed to be $1.2$. 
+
+\subsection{Flux Distributions}
+Figure~\ref{fig:flux} shows the calculated flux distributions from the track length and collision rate estimators. Both distributions show the same trend where the flux is higher in the left region and lower in the right region. This is expected as $\Sigma_a$ and $\nu\Sigma_f$ in the left region are larger than that in the right region. The peak of the flux distribution having a bias towards the interface rather than being in the center of the left region also makes sense, as neutrons produced in the right region will travel into the left.
+\begin{figure}[htbp!]
+        \begin{center}
+                \includegraphics[width=0.7\textwidth]{flux.png}
+        \end{center}
+        \caption{This figure shows the calculated flux distributions from the track length and collision estimators.}
+        \label{fig:flux}
+\end{figure}
+
+\subsection{Multiplication}
+The multiplication constant is calculated as the mean of the $k$s for the active generations. Table~\ref{tab:mult} shows the calculated average $k$ for different active generations. The average $k$ remains consistent, varying between $1.227$ and $1.230$. The average over all four groups is $1.228$. This value of $k$ is slightly larger than expected; however, the MC code is consistent, showing little variance over different numbers of inactive and active generations.
+
+ \begin{table}[hbt!]
+    \caption{Table containing the average multiplication constant for varying active generations.}
+    \label{tab:mult}
+    \centering
+    \begin{tabular}{ |ccc| }
+    \hline 
+  G$_I$ & G$_A$ & $k_{avg}$ \\
+    \hline 
+    20 & 5 &  1.230 \\
+    20 & 10 & 1.227 \\
+    20 & 15 & 1.227 \\
+    20 & 20 & 1.229 \\
+    \hline 
+    \end{tabular}
+\end{table}
+
+\section{Conclusions}
+A Monte Carlo solver for one-speed neutrons in a \SI{100}{\cm} thick slab with an interface at \SI{50}{\cm} was created. It successfully implements the MC sampling for each neutron in a given population over the user defined number of inactive and active generations. The MC code successfully estimates the neutron flux using both the collision rate and track length estimators and is able to calculate the average multiplication constant over all active generations. The result flux distribution from the track length and collision rate estimators show good agreement. The average multiplication constant, $k$, is 1.228.
+
+\subsection{Collaborators}
+Ethan Nicolls
+Kevin Sawatzky
+Gable Edwards
+
+\pagebreak
+\bibliographystyle{plain}
+\bibliography{bibliography}
+\end{document}
+
